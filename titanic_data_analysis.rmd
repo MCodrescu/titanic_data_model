@@ -110,7 +110,10 @@ data.frame(cor_matrix) |>
     )
   ) +
   geom_col() +
-  xlim(c(0,1))
+  xlim(c(0,1)) +
+  xlab("Absolute Correlation") +
+  ylab("Predictors") +
+  labs(fill = "Correlation")
 ```
 
 ```{r}
