@@ -119,70 +119,70 @@ data.frame(cor_matrix) |>
 ```{r}
 # Function to create a model
 create_model <-
-    function(data,
-             formula,
-             model_type,
-             mode = "regression",
-             n_folds = 10,
-             seed = 101) {
+  function(data,
+           formula,
+           model_type,
+           mode = "regression",
+           n_folds = 10,
+           seed = 101) {
 
-        # Model recipe
-        model_recipe <-
-            data %>%
-            recipe(formula)
-        
-        # Model mode and engine
-        model <-
-            model_type %>%
-            set_mode(mode)
+    # Model recipe
+    model_recipe <-
+      data |>
+      recipe(formula)
 
-        # Wrap in a workflow
-        model_workflow <-
-            workflow() %>%
-            add_recipe(model_recipe) %>%
-            add_model(model)
+    # Model mode and engine
+    model <-
+      model_type |>
+      set_mode(mode)
 
-        # Split the data
-        set.seed(seed)
-        data_split <-
-            initial_split(
-                as.data.frame(data),
-                strata = all.vars(formula)[1]
-            )
+    # Wrap in a workflow
+    model_workflow <-
+      workflow() |>
+      add_recipe(model_recipe) |>
+      add_model(model)
 
-        # Create data folds
-        set.seed(seed)
-        data_folds <-
-            vfold_cv(
-                training(data_split),
-                v = n_folds,
-                strata = all.vars(formula)[1]
-            )
+    # Split the data
+    set.seed(seed)
+    data_split <-
+      initial_split(
+        as.data.frame(data),
+        strata = all.vars(formula)[1]
+      )
 
-        # Select best model
-        set.seed(seed)
-        best_model <-
-            tune_grid(
-                model_workflow,
-                resamples = data_folds
-            ) %>%
-            select_best()
+    # Create data folds
+    set.seed(seed)
+    data_folds <-
+      vfold_cv(
+        training(data_split),
+        v = n_folds,
+        strata = all.vars(formula)[1]
+      )
 
-        # Finalize the model
-        model_workflow_final <-
-            finalize_workflow(
-                model_workflow,
-                best_model
-            )
+    # Select best model
+    set.seed(seed)
+    best_model <-
+      tune_grid(
+        model_workflow,
+        resamples = data_folds
+      ) |>
+      select_best()
 
-        # Fit the model
-        set.seed(seed)
-        model_fit <-
-            model_workflow_final %>%
-            last_fit(
-                data_split
-            )
-    }
+    # Finalize the model
+    model_workflow_final <-
+      finalize_workflow(
+        model_workflow,
+        best_model
+      )
+
+    # Fit the model
+    set.seed(seed)
+    model_fit <-
+      model_workflow_final |>
+      last_fit(
+        data_split
+      )
+  }
 ```
 
 ```{r}
