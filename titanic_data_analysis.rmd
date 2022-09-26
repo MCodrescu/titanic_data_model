@@ -1,0 +1,318 @@
+---
+output: html_notebook
+title: "Titanic Survival Prediction"
+author: "Marcus Codrescu"
+---
+
+```{r}
+library(tidyverse)
+library(tidymodels)
+library(janitor)
+```
+
+```{r}
+titanic_data <-
+    read_csv("train.csv") |>
+    clean_names()
+
+test_data <-
+    read_csv("test.csv") |>
+    mutate(
+        survived = NA
+    ) |>
+    clean_names()
+```
+
+```{r}
+skimr::skim(titanic_data)
+```
+
+```{r}
+# Correlation graph
+cor_matrix <- cor(
+  select(
+    titanic_data,
+    where(is.numeric)
+  ),
+  use = "pairwise.complete.obs"
+) 
+
+data.frame(cor_matrix) |>
+  mutate(
+    variable_1 = rownames(cor_matrix)
+  ) |>
+  pivot_longer(
+    -c(variable_1),
+    names_to = "variable_2"
+  ) |>
+  filter(
+    variable_1 == "survived",
+    variable_2 != "survived"
+  ) |>
+  ggplot(
+    aes(
+      x = abs(value),
+      y = variable_2,
+      fill = abs(value)
+    )
+  ) +
+  geom_col() +
+  xlim(c(0,1))
+                 
+```
+
+```{r}
+model_recipe <-
+    titanic_data |>
+    recipe(survived ~ .) |>
+    step_select(
+        -c(
+            name,
+            ticket,
+            passenger_id
+        )
+    ) |>
+    step_mutate(
+        cabin = as.factor(
+            str_sub(
+                cabin,
+                start = 1,
+                end = 1
+            )
+        )
+    ) |>
+    step_string2factor(
+        all_nominal_predictors()
+    ) |>
+    step_dummy(
+        all_nominal_predictors()
+    ) |>
+    step_impute_median(
+        all_numeric_predictors()
+    ) |>
+    step_indicate_na(
+        all_numeric_predictors()
+    ) |>
+    step_nzv(
+        all_numeric_predictors()
+    ) |>
+    step_corr(
+        all_numeric_predictors()
+    ) |>
+    step_BoxCox(
+        all_numeric_predictors()
+    ) |>
+    step_normalize(
+        all_numeric_predictors()
+    )
+```
+
+```{r}
+titanic_data_transformed <-
+    prep(model_recipe) |>
+    bake(new_data = titanic_data)
+```
+
+```{r}
+skimr::skim(titanic_data_transformed)
+```
+
+```{r}
+titanic_data_transformed |>
+    pivot_longer(
+        cols = everything()
+    ) |>
+    ggplot(
+        aes(
+            x = value
+        )
+    ) +
+    geom_density() +
+    facet_wrap(vars(name), scales = "free")
+```
+
+```{r}
+# Correlation Heat Map
+cor_matrix <- round(cor(titanic_data_transformed), 2)
+
+cor_matrix |>
+    as.data.frame() |>
+    mutate(
+        variable_1 = rownames(cor_matrix)
+    ) |>
+    pivot_longer(
+        -c(variable_1),
+        names_to = "variable_2",
+        values_to = "correlation"
+    ) |>
+    ggplot(
+        aes(
+            x = variable_1,
+            y = variable_2,
+            fill = correlation
+        )
+    ) +
+    geom_tile() +
+    geom_text(
+        aes(
+            x = variable_1,
+            y = variable_2,
+            label = correlation
+        ),
+        size = 5
+    ) +
+    scale_fill_gradient2(
+        low = "blue", high = "red",
+        limit = c(-1, 1), name = "Correlation"
+    ) +
+    theme(
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        panel.background = element_blank()
+    )
+```
+
+```{r}
+# Function to create a model
+create_model <-
+    function(data,
+             formula,
+             model_type,
+             mode = "regression",
+             n_folds = 10,
+             seed = 101) {
+
+        # Create a recipe
+        model_recipe <-
+            data %>%
+            recipe(formula)
+
+        # Linear Regression
+        model <-
+            model_type %>%
+            set_mode(mode)
+
+        # Wrap up the models and recipes into a workflow
+        model_workflow <-
+            workflow() %>%
+            add_recipe(model_recipe) %>%
+            add_model(model)
+
+        # Split the data
+        set.seed(seed)
+        data_split <-
+            initial_split(
+                as.data.frame(data),
+                strata = all.vars(formula)[1]
+            )
+
+        # Create data folds
+        set.seed(seed)
+        data_folds <-
+            vfold_cv(
+                training(data_split),
+                v = n_folds,
+                strata = all.vars(formula)[1]
+            )
+
+        # Select best model
+        set.seed(seed)
+        best_model <-
+            tune_grid(
+                model_workflow,
+                resamples = data_folds
+            ) %>%
+            select_best()
+
+        # Finalize the models
+        model_workflow_final <-
+            finalize_workflow(
+                model_workflow,
+                best_model
+            )
+
+        # Fit the model
+        set.seed(seed)
+        model_fit <-
+            model_workflow_final %>%
+            last_fit(
+                data_split
+            )
+    }
+```
+
+```{r}
+rf_model <-
+    titanic_data_transformed |>
+    mutate(
+        survived = factor(survived)
+    ) |>
+    create_model(
+        survived ~ .,
+        rand_forest(
+            mtry = tune(),
+            min_n = tune()
+        ),
+        "classification",
+        3
+    )
+
+lr_model <-
+    titanic_data_transformed |>
+    mutate(
+        survived = factor(survived)
+    ) |>
+    create_model(
+        survived ~ .,
+        logistic_reg(),
+        "classification",
+        3
+    )
+
+nn_model <-
+    titanic_data_transformed |>
+    mutate(
+        survived = factor(survived)
+    ) |>
+    create_model(
+        survived ~ .,
+        nearest_neighbor(
+            neighbors = tune()
+        ),
+        "classification",
+        3
+    )
+
+dt_model <-
+    titanic_data_transformed |>
+    mutate(
+        survived = factor(survived)
+    ) |>
+    create_model(
+        survived ~ .,
+        decision_tree(
+            min_n = tune()
+        ),
+        "classification",
+        3
+    )
+```
+
+```{r}
+collect_metrics(rf_model)
+collect_metrics(lr_model)
+collect_metrics(nn_model)
+collect_metrics(dt_model)
+```
+
+```{r}
+test_data_transformed <-
+    prep(model_recipe) |>
+    bake(new_data = test_data)
+
+predict(
+    object = extract_fit_parsnip(nn_model),
+    new_data = test_data_transformed,
+    type = "class"
+)
+```
