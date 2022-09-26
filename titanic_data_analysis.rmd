@@ -8,6 +8,7 @@ author: "Marcus Codrescu"
 library(tidyverse)
 library(tidymodels)
 library(janitor)
+library(skimr)
 ```
 
 ```{r}
@@ -24,41 +25,7 @@ test_data <-
 ```
 
 ```{r}
-skimr::skim(titanic_data)
-```
-
-```{r}
-# Correlation graph
-cor_matrix <- cor(
-  select(
-    titanic_data,
-    where(is.numeric)
-  ),
-  use = "pairwise.complete.obs"
-) 
-
-data.frame(cor_matrix) |>
-  mutate(
-    variable_1 = rownames(cor_matrix)
-  ) |>
-  pivot_longer(
-    -c(variable_1),
-    names_to = "variable_2"
-  ) |>
-  filter(
-    variable_1 == "survived",
-    variable_2 != "survived"
-  ) |>
-  ggplot(
-    aes(
-      x = abs(value),
-      y = variable_2,
-      fill = abs(value)
-    )
-  ) +
-  geom_col() +
-  xlim(c(0,1))
-                 
+skim(titanic_data)
 ```
 
 ```{r}
@@ -81,16 +48,13 @@ model_recipe <-
             )
         )
     ) |>
-    step_string2factor(
-        all_nominal_predictors()
+    step_indicate_na(
+        all_predictors()
     ) |>
     step_dummy(
         all_nominal_predictors()
     ) |>
     step_impute_median(
-        all_numeric_predictors()
-    ) |>
-    step_indicate_na(
         all_numeric_predictors()
     ) |>
     step_nzv(
@@ -114,62 +78,39 @@ titanic_data_transformed <-
 ```
 
 ```{r}
-skimr::skim(titanic_data_transformed)
+skim(titanic_data_transformed)
 ```
 
 ```{r}
-titanic_data_transformed |>
-    pivot_longer(
-        cols = everything()
-    ) |>
-    ggplot(
-        aes(
-            x = value
-        )
-    ) +
-    geom_density() +
-    facet_wrap(vars(name), scales = "free")
-```
+# Correlation graph
+cor_matrix <- cor(
+  select(
+    titanic_data_transformed,
+    where(is.numeric)
+  )
+) 
 
-```{r}
-# Correlation Heat Map
-cor_matrix <- round(cor(titanic_data_transformed), 2)
-
-cor_matrix |>
-    as.data.frame() |>
-    mutate(
-        variable_1 = rownames(cor_matrix)
-    ) |>
-    pivot_longer(
-        -c(variable_1),
-        names_to = "variable_2",
-        values_to = "correlation"
-    ) |>
-    ggplot(
-        aes(
-            x = variable_1,
-            y = variable_2,
-            fill = correlation
-        )
-    ) +
-    geom_tile() +
-    geom_text(
-        aes(
-            x = variable_1,
-            y = variable_2,
-            label = correlation
-        ),
-        size = 5
-    ) +
-    scale_fill_gradient2(
-        low = "blue", high = "red",
-        limit = c(-1, 1), name = "Correlation"
-    ) +
-    theme(
-        axis.title.x = element_blank(),
-        axis.title.y = element_blank(),
-        panel.background = element_blank()
+data.frame(cor_matrix) |>
+  mutate(
+    variable_1 = rownames(cor_matrix)
+  ) |>
+  pivot_longer(
+    -c(variable_1),
+    names_to = "variable_2"
+  ) |>
+  filter(
+    variable_1 == "survived",
+    variable_2 != "survived"
+  ) |>
+  ggplot(
+    aes(
+      x = abs(value),
+      y = variable_2,
+      fill = abs(value)
     )
+  ) +
+  geom_col() +
+  xlim(c(0,1))
 ```
 
 ```{r}
@@ -182,17 +123,17 @@ create_model <-
              n_folds = 10,
              seed = 101) {
 
-        # Create a recipe
+        # Model recipe
         model_recipe <-
             data %>%
             recipe(formula)
-
-        # Linear Regression
+        
+        # Model mode and engine
         model <-
             model_type %>%
             set_mode(mode)
 
-        # Wrap up the models and recipes into a workflow
+        # Wrap in a workflow
         model_workflow <-
             workflow() %>%
             add_recipe(model_recipe) %>%
@@ -224,7 +165,7 @@ create_model <-
             ) %>%
             select_best()
 
-        # Finalize the models
+        # Finalize the model
         model_workflow_final <-
             finalize_workflow(
                 model_workflow,
@@ -299,20 +240,54 @@ dt_model <-
 ```
 
 ```{r}
-collect_metrics(rf_model)
-collect_metrics(lr_model)
-collect_metrics(nn_model)
-collect_metrics(dt_model)
+do.call(
+  bind_rows,
+  args = list(
+    collect_metrics(rf_model),
+    collect_metrics(lr_model),
+    collect_metrics(nn_model),
+    collect_metrics(dt_model)
+  )
+) |>
+  mutate(
+    model = c(
+      rep("random_forest", 2),
+      rep("logistic_regression", 2),
+      rep("nearest_neighbor", 2),
+      rep("decision_tree", 2)
+    )
+  ) |>
+  select(
+    -c(.config)
+  )
+
 ```
 
 ```{r}
 test_data_transformed <-
-    prep(model_recipe) |>
-    bake(new_data = test_data)
+  prep(model_recipe) |>
+  bake(new_data = test_data)
 
-predict(
-    object = extract_fit_parsnip(nn_model),
-    new_data = test_data_transformed,
-    type = "class"
+result <- 
+  predict(
+  object = extract_fit_parsnip(
+    nn_model
+  ),
+  new_data = test_data_transformed,
+  type = "class"
 )
+```
+
+```{r}
+test_data |>
+  bind_cols(
+    result
+  ) |>
+  select(
+    PassengerId = passenger_id,
+    Survived = .pred_class
+  ) |>
+  write_csv(
+    "predictions.csv"
+  )
 ```
